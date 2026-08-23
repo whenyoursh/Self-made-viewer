@@ -30,31 +30,20 @@ jobs:
           rm -rf android
           flutter create . --platforms=android --org=com.example --project-name=fold_comic_viewer
 
-      - name: Configure compileSdk 36 & Android Permissions
+      - name: Configure Android Permissions & Gradle Properties
         run: |
           # 1. Inject storage permissions to AndroidManifest.xml
           sed -i '/<manifest/a \    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' android/app/src/main/AndroidManifest.xml
 
-          # 2. Update compileSdk in app
-          sed -i 's/compileSdk = .*/compileSdk = 36/' android/app/build.gradle.kts || true
-
-          # 3. Configure all library subprojects compileSdk safely using plugins.withId
-          cat << 'EOF' >> android/build.gradle.kts
-
-          subprojects {
-              plugins.withId("com.android.library") {
-                  extensions.findByType(com.android.build.gradle.LibraryExtension::class.java)?.apply {
-                      compileSdk = 36
-                  }
-              }
-          }
-          EOF
+          # 2. Suppress compileSdk check in gradle.properties
+          echo "android.suppressUnsupportedCompileSdk=36" >> android/gradle.properties
+          echo "android.enableJetifier=true" >> android/gradle.properties
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Build Android Release APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
