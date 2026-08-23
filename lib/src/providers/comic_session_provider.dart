@@ -47,6 +47,27 @@ class ComicSessionNotifier extends StateNotifier<ComicSessionState> {
 
   ComicSessionNotifier(this._ref) : super(const ComicSessionState());
 
+  Future<void> openBookDirect(ComicBook book, {int? initialPage}) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+
+    int targetPage = 0;
+    if (initialPage != null && initialPage > 0 && initialPage <= book.totalPages) {
+      targetPage = initialPage - 1;
+    }
+
+    state = ComicSessionState(
+      book: book,
+      currentPageIndex: targetPage,
+      isLoading: false,
+      areControlsVisible: false,
+    );
+
+    _ref.read(historyProvider.notifier).recordBookOpened(
+      book: book,
+      currentPage: targetPage + 1,
+    );
+  }
+
   Future<void> openBook(String path, {int? initialPage}) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
 

@@ -25,14 +25,38 @@ class HomeScreen extends ConsumerWidget {
       return;
     }
 
-    final path = await fileService.pickComicFile();
-    if (path != null && context.mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ViewerScreen(comicPath: path),
-        ),
-      );
+    final result = await fileService.pickComic();
+    if (result != null && context.mounted) {
+      if (result.bytes != null) {
+        try {
+          final archiveService = ref.read(archiveServiceProvider);
+          final book = await archiveService.loadComicFromBytes(
+            title: result.name,
+            archiveBytes: result.bytes!,
+          );
+          if (context.mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ViewerScreen(comicBook: book),
+              ),
+            );
+          }
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('압축 파일을 열 수 없습니다: $e')),
+            );
+          }
+        }
+      } else if (result.path != null) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ViewerScreen(comicPath: result.path!),
+          ),
+        );
+      }
     }
   }
 

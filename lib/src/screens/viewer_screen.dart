@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/comic_book.dart';
 import '../providers/comic_session_provider.dart';
 import '../providers/settings_provider.dart';
 import '../widgets/page_view_widget.dart';
@@ -8,12 +9,14 @@ import '../widgets/viewer_controls_overlay.dart';
 
 /// Full screen comic reader optimized for Galaxy Fold
 class ViewerScreen extends ConsumerStatefulWidget {
-  final String comicPath;
+  final String? comicPath;
+  final ComicBook? comicBook;
   final int? initialPage;
 
   const ViewerScreen({
     super.key,
-    required this.comicPath,
+    this.comicPath,
+    this.comicBook,
     this.initialPage,
   });
 
@@ -28,10 +31,17 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(comicSessionProvider.notifier).openBook(
-        widget.comicPath,
-        initialPage: widget.initialPage,
-      );
+      if (widget.comicBook != null) {
+        ref.read(comicSessionProvider.notifier).openBookDirect(
+          widget.comicBook!,
+          initialPage: widget.initialPage,
+        );
+      } else if (widget.comicPath != null) {
+        ref.read(comicSessionProvider.notifier).openBook(
+          widget.comicPath!,
+          initialPage: widget.initialPage,
+        );
+      }
     });
   }
 

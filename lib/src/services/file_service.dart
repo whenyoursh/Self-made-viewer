@@ -1,14 +1,18 @@
-import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 import '../utils/natural_sort.dart';
 
+// Conditional import for non-web file IO
+import 'dart:io' if (dart.library.html) 'archive_service_web_stub.dart' as io;
+
 class FileItemInfo {
   final String path;
   final String name;
   final bool isDirectory;
-  final int? fileCount; // If directory
+  final int? fileCount;
 
   FileItemInfo({
     required this.path,
@@ -18,47 +22,63 @@ class FileItemInfo {
   });
 }
 
+class PickedComicResult {
+  final String name;
+  final String? path;
+  final Uint8List? bytes;
+
+  PickedComicResult({
+    required this.name,
+    this.path,
+    this.bytes,
+  });
+}
+
 class FileService {
   static const Set<String> comicExtensions = {'.zip', '.cbz'};
   static const Set<String> imageExtensions = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'};
 
   /// Requests storage permissions on Android/devices
   Future<bool> requestStoragePermission() async {
-    if (Platform.isAndroid) {
-      // For Android 11+ (API 30+)
+    if (!kIsWeb && io.Platform.isAndroid) {
       if (await Permission.manageExternalStorage.isGranted) {
         return true;
       }
       final status = await Permission.manageExternalStorage.request();
       if (status.isGranted) return true;
 
-      // Fallback for Android 10 and below
       final storageStatus = await Permission.storage.request();
       if (storageStatus.isGranted) return true;
 
-      // Check media images for Android 13+
       final photosStatus = await Permission.photos.request();
       return photosStatus.isGranted;
     }
     return true;
   }
 
-  /// Picks a comic archive file (.zip, .cbz)
-  Future<String?> pickComicFile() async {
+  /// Picks a comic archive file (.zip, .cbz) supporting both Web & Native
+  Future<PickedComicResult?> pickComic() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['zip', 'cbz'],
+      withData: true,
       dialogTitle: '만화 압축 파일 선택 (ZIP, CBZ)',
     );
 
-    if (result != null && result.files.single.path != null) {
-      return result.files.single.path;
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.single;
+      return PickedComicResult(
+        name: file.name,
+        path: file.path,
+        bytes: file.bytes,
+      );
     }
     return null;
   }
 
-  /// Picks a comic folder
+  /// Picks a comic folder (Native only)
   Future<String?> pickComicDirectory() async {
+    if (kIsWeb) return null;
     final selectedDirectory = await FilePicker.platform.getDirectoryPath(
       dialogTitle: '만화 이미지 폴더 선택',
     );
@@ -67,8 +87,9 @@ class FileService {
 
   /// Lists comic archives and image folders within a directory
   Future<List<FileItemInfo>> listFolderContents(String folderPath) async {
-    final dir = Directory(folderPath);
-    if (!await dir.exists()) return [];
+    if (kIsWeb) return [];
+    final dir = io.Directory(folderPath);
+    if (!await io.FileSystemEntity.isDirectory(folderPath)) return [];
 
     final entities = await dir.list().toList();
     final items = <FileItemInfo>[];
@@ -77,13 +98,14 @@ class FileService {
       final name = p.basename(entity.path);
       if (name.startsWith('.') || name.contains('__MACOSX')) continue;
 
-      if (entity is Directory) {
+      final isDir = await io.FileSystemEntity.isDirectory(entity.path);
+      if (isDir) {
         items.add(FileItemInfo(
           path: entity.path,
           name: name,
           isDirectory: true,
         ));
-      } else if (entity is File) {
+      } else {
         final ext = p.extension(entity.path).toLowerCase();
         if (comicExtensions.contains(ext)) {
           items.add(FileItemInfo(
@@ -95,7 +117,6 @@ class FileService {
       }
     }
 
-    // Sort folders first, then files with natural sort
     items.sort((a, b) {
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
