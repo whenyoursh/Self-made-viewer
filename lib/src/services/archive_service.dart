@@ -24,12 +24,29 @@ class ArchiveService {
   Archive? _cachedArchive;
   String? _cachedArchivePath;
 
+  /// Helper to safely extract byte content from ArchiveFile across Web and Native
+  static Uint8List _extractBytes(ArchiveFile file) {
+    try {
+      final content = file.content;
+      if (content is Uint8List) {
+        return content;
+      } else if (content is List<int>) {
+        return Uint8List.fromList(content);
+      } else if (content is InputStream) {
+        return Uint8List.fromList(content.toUint8List());
+      } else if (file.rawContent != null) {
+        return Uint8List.fromList(file.rawContent!.toUint8List());
+      }
+    } catch (_) {}
+    return Uint8List(0);
+  }
+
   /// Loads comic directly from in-memory archive bytes (Ideal for Web & Mobile)
   Future<ComicBook> loadComicFromBytes({
     required String title,
     required Uint8List archiveBytes,
   }) async {
-    final archive = ZipDecoder().decodeBytes(archiveBytes);
+    final archive = ZipDecoder().decodeBytes(archiveBytes, verify: false);
     _cachedArchive = archive;
     _cachedArchivePath = title;
     _pageCache.clear();
@@ -45,7 +62,7 @@ class ArchiveService {
     }).toList();
 
     if (validEntries.isEmpty) {
-      throw const FormatException('압축 파일 내에 지원되는 이미지 파일이 없습니다.');
+      throw const FormatException('압축 파일 내에 이미지 파일(JPG, PNG, WEBP 등)을 찾을 수 없습니다.');
     }
 
     final sortedEntryNames = NaturalSort.sortList(validEntries.map((e) => e.name).toList());
@@ -60,12 +77,12 @@ class ArchiveService {
       ));
     }
 
-    // Cache cover
+    // Extract cover image
     Uint8List? coverBytes;
     if (pages.isNotEmpty) {
       final firstEntry = archive.findFile(pages.first.internalPath!);
       if (firstEntry != null) {
-        coverBytes = Uint8List.fromList(firstEntry.content as List<int>);
+        coverBytes = _extractBytes(firstEntry);
         _pageCache['$title:0'] = coverBytes;
       }
     }
@@ -159,7 +176,7 @@ class ArchiveService {
         if (!kIsWeb) {
           final file = io.File(comicPath);
           final fileBytes = await file.readAsBytes();
-          _cachedArchive = ZipDecoder().decodeBytes(fileBytes);
+          _cachedArchive = ZipDecoder().decodeBytes(fileBytes, verify: false);
           _cachedArchivePath = comicPath;
         } else {
           throw const FormatException('웹 캐시에서 아카이브를 찾을 수 없습니다.');
@@ -171,7 +188,7 @@ class ArchiveService {
         throw FormatException('압축 내 페이지를 찾을 수 없습니다: ${pageInfo.internalPath}');
       }
 
-      final bytes = Uint8List.fromList(entry.content as List<int>);
+      final bytes = _extractBytes(entry);
       if (_pageCache.length > 25) {
         _pageCache.remove(_pageCache.keys.first);
       }

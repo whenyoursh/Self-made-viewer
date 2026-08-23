@@ -27,14 +27,40 @@ class HomeScreen extends ConsumerWidget {
 
     final result = await fileService.pickComic();
     if (result != null && context.mounted) {
-      if (result.bytes != null) {
-        try {
+      // Show loading spinner dialog while unpacking ZIP
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: Center(
+            child: Card(
+              color: Color(0xFF1E1E2E),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.blueAccent),
+                    SizedBox(height: 16),
+                    Text('만화책을 분석하는 중...', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      try {
+        if (result.bytes != null) {
           final archiveService = ref.read(archiveServiceProvider);
           final book = await archiveService.loadComicFromBytes(
             title: result.name,
             archiveBytes: result.bytes!,
           );
           if (context.mounted) {
+            Navigator.pop(context); // Close loading spinner
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -42,20 +68,45 @@ class HomeScreen extends ConsumerWidget {
               ),
             );
           }
-        } catch (e) {
+        } else if (result.path != null) {
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('압축 파일을 열 수 없습니다: $e')),
+            Navigator.pop(context); // Close loading spinner
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ViewerScreen(comicPath: result.path!),
+              ),
             );
           }
         }
-      } else if (result.path != null) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ViewerScreen(comicPath: result.path!),
-          ),
-        );
+      } catch (e) {
+        if (context.mounted) {
+          Navigator.pop(context); // Close loading spinner
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.redAccent),
+                  SizedBox(width: 8),
+                  Text('파일 열기 실패', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: Text(
+                '압축 파일 처리 중 오류가 발생했습니다:\n$e',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  child: const Text('확인', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        }
       }
     }
   }
