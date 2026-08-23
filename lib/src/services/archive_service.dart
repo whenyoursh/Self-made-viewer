@@ -21,7 +21,9 @@ class ArchiveService {
 
   // In-memory cache for loaded page bytes
   final Map<String, Uint8List> _pageCache = {};
-  Archive? _cachedArchive;
+  
+  // List of sorted archive entries for O(1) direct index access
+  List<ArchiveFile> _cachedEntries = [];
   String? _cachedArchivePath;
 
   /// Helper to safely extract byte content from ArchiveFile across Web and Native
@@ -37,7 +39,9 @@ class ArchiveService {
       } else if (file.rawContent != null) {
         return Uint8List.fromList(file.rawContent!.toUint8List());
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Error extracting archive file bytes: $e');
+    }
     return Uint8List(0);
   }
 
@@ -46,45 +50,57 @@ class ArchiveService {
     required String title,
     required Uint8List archiveBytes,
   }) async {
-    final archive = ZipDecoder().decodeBytes(archiveBytes, verify: false);
-    _cachedArchive = archive;
-    _cachedArchivePath = title;
     _pageCache.clear();
+    _cachedEntries.clear();
 
-    final validEntries = archive.files.where((f) {
-      if (!f.isFile) return false;
-      final name = f.name;
-      if (name.contains('__MACOSX') || name.startsWith('.') || name.contains('/.')) {
-        return false;
+    final archive = ZipDecoder().decodeBytes(archiveBytes, verify: false);
+    _cachedArchivePath = title;
+
+    final validEntries = <ArchiveFile>[];
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
+      // Normalize slashes
+      final normalizedName = f.name.replaceAll('\\', '/');
+      if (normalizedName.contains('__MACOSX') ||
+          p.basename(normalizedName).startsWith('.') ||
+          normalizedName.contains('/.')) {
+        continue;
       }
-      final ext = p.extension(name).toLowerCase();
-      return _validExtensions.contains(ext);
-    }).toList();
-
-    if (validEntries.isEmpty) {
-      throw const FormatException('압축 파일 내에 이미지 파일(JPG, PNG, WEBP 등)을 찾을 수 없습니다.');
+      final ext = p.extension(normalizedName).toLowerCase();
+      if (_validExtensions.contains(ext)) {
+        validEntries.add(f);
+      }
     }
 
-    final sortedEntryNames = NaturalSort.sortList(validEntries.map((e) => e.name).toList());
+    if (validEntries.isEmpty) {
+      throw const FormatException('압축 파일 내에 지원되는 이미지(JPG, PNG, WEBP 등)가 없습니다.\n(하위 폴더 내부 이미지도 지원합니다)');
+    }
+
+    // Sort naturally by filename
+    validEntries.sort((a, b) {
+      final aName = a.name.replaceAll('\\', '/');
+      final bName = b.name.replaceAll('\\', '/');
+      return NaturalSort.compare(p.basename(aName), p.basename(bName));
+    });
+
+    _cachedEntries = validEntries;
 
     final pages = <ComicPageInfo>[];
-    for (int i = 0; i < sortedEntryNames.length; i++) {
-      final entryName = sortedEntryNames[i];
+    for (int i = 0; i < validEntries.length; i++) {
+      final entry = validEntries[i];
+      final normalizedName = entry.name.replaceAll('\\', '/');
       pages.add(ComicPageInfo(
         index: i,
-        name: p.basename(entryName),
-        internalPath: entryName,
+        name: p.basename(normalizedName),
+        internalPath: normalizedName,
       ));
     }
 
-    // Extract cover image
+    // Extract cover image (Page 1)
     Uint8List? coverBytes;
-    if (pages.isNotEmpty) {
-      final firstEntry = archive.findFile(pages.first.internalPath!);
-      if (firstEntry != null) {
-        coverBytes = _extractBytes(firstEntry);
-        _pageCache['$title:0'] = coverBytes;
-      }
+    if (validEntries.isNotEmpty) {
+      coverBytes = _extractBytes(validEntries.first);
+      _pageCache['$title:0'] = coverBytes;
     }
 
     return ComicBook(
@@ -106,9 +122,8 @@ class ArchiveService {
     if (isDirectory) {
       return _loadFromDirectory(io.Directory(path));
     } else {
-      final ext = p.extension(path).toLowerCase();
       final file = io.File(path);
-      final bytes = await file.readAsBytes();
+      final bytes = Uint8List.fromList(await file.readAsBytes());
       return loadComicFromBytes(title: p.basenameWithoutExtension(path), archiveBytes: bytes);
     }
   }
@@ -142,7 +157,7 @@ class ArchiveService {
     Uint8List? coverBytes;
     if (pages.isNotEmpty) {
       try {
-        coverBytes = await io.File(pages.first.internalPath!).readAsBytes();
+        coverBytes = Uint8List.fromList(await io.File(pages.first.internalPath!).readAsBytes());
       } catch (_) {}
     }
 
@@ -155,7 +170,7 @@ class ArchiveService {
     );
   }
 
-  /// Loads the image bytes for a specific page
+  /// Loads the image bytes for a specific page with O(1) index lookup
   Future<Uint8List> loadPageBytes({
     required String comicPath,
     required ComicPageInfo pageInfo,
@@ -172,34 +187,24 @@ class ArchiveService {
       _pageCache[cacheKey] = bytes;
       return bytes;
     } else {
-      if (_cachedArchive == null) {
-        if (!kIsWeb) {
-          final file = io.File(comicPath);
-          final fileBytes = await file.readAsBytes();
-          _cachedArchive = ZipDecoder().decodeBytes(fileBytes, verify: false);
-          _cachedArchivePath = comicPath;
-        } else {
-          throw const FormatException('웹 캐시에서 아카이브를 찾을 수 없습니다.');
+      // Direct O(1) index access from cached entries
+      if (pageInfo.index >= 0 && pageInfo.index < _cachedEntries.length) {
+        final entry = _cachedEntries[pageInfo.index];
+        final bytes = _extractBytes(entry);
+        if (_pageCache.length > 25) {
+          _pageCache.remove(_pageCache.keys.first);
         }
+        _pageCache[cacheKey] = bytes;
+        return bytes;
+      } else {
+        throw FormatException('압축 내 페이지를 찾을 수 없습니다: index ${pageInfo.index}');
       }
-
-      final entry = _cachedArchive!.findFile(pageInfo.internalPath!);
-      if (entry == null) {
-        throw FormatException('압축 내 페이지를 찾을 수 없습니다: ${pageInfo.internalPath}');
-      }
-
-      final bytes = _extractBytes(entry);
-      if (_pageCache.length > 25) {
-        _pageCache.remove(_pageCache.keys.first);
-      }
-      _pageCache[cacheKey] = bytes;
-      return bytes;
     }
   }
 
   void clearCache() {
     _pageCache.clear();
-    _cachedArchive = null;
+    _cachedEntries.clear();
     _cachedArchivePath = null;
   }
 }

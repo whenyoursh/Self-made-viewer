@@ -58,22 +58,34 @@ class FileService {
     return true;
   }
 
-  /// Picks a comic archive file (.zip, .cbz) supporting both Web & Native
+  /// Picks a comic archive file (.zip, .cbz) supporting both Web & Native with stream fallback
   Future<PickedComicResult?> pickComic() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: kIsWeb ? FileType.any : FileType.custom,
         allowedExtensions: kIsWeb ? null : ['zip', 'cbz'],
         withData: true,
+        withReadStream: kIsWeb,
         dialogTitle: '만화 압축 파일 선택 (ZIP, CBZ)',
       );
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.single;
+        Uint8List? bytes = file.bytes;
+
+        // If bytes is null on Web for large files, consume readStream
+        if (bytes == null && file.readStream != null) {
+          final builder = BytesBuilder();
+          await for (final chunk in file.readStream!) {
+            builder.add(chunk);
+          }
+          bytes = builder.toBytes();
+        }
+
         return PickedComicResult(
           name: file.name,
           path: file.path,
-          bytes: file.bytes,
+          bytes: bytes,
         );
       }
     } catch (e) {
