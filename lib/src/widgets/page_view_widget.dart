@@ -6,7 +6,7 @@ import '../providers/comic_session_provider.dart';
 import '../providers/settings_provider.dart';
 import 'cropped_image_widget.dart';
 
-/// Handles rendering single page or dual pages (accounting for LTR/RTL reading direction)
+/// Handles rendering single page or dual pages (accounting for LTR/RTL reading direction with 0 gap)
 class ComicPageViewWidget extends ConsumerWidget {
   const ComicPageViewWidget({super.key});
 
@@ -26,14 +26,17 @@ class ComicPageViewWidget extends ConsumerWidget {
 
     if (!isDual) {
       // ==================== Single Page Mode ====================
-      return _buildSinglePage(ref, currentIndex, settings.marginCrop);
+      return _buildSinglePage(
+        ref: ref,
+        pageIndex: currentIndex,
+        crop: settings.marginCrop,
+        alignment: Alignment.center,
+      );
     } else {
-      // ==================== Dual Page Mode ====================
-      // Page 1 is currentIndex, Page 2 is currentIndex + 1
+      // ==================== Dual Page Mode (Seamless 0 Gap) ====================
       final int firstPageIndex = currentIndex;
       final int? secondPageIndex = (currentIndex + 1 < total) ? currentIndex + 1 : null;
 
-      // Determine which page goes to Left vs Right based on Reading Direction
       int? leftPageIndex;
       int? rightPageIndex;
 
@@ -48,16 +51,28 @@ class ComicPageViewWidget extends ConsumerWidget {
       }
 
       return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Left page: flush against center right edge
           Expanded(
             child: leftPageIndex != null
-                ? _buildSinglePage(ref, leftPageIndex, settings.marginCrop)
+                ? _buildSinglePage(
+                    ref: ref,
+                    pageIndex: leftPageIndex,
+                    crop: settings.marginCrop,
+                    alignment: Alignment.centerRight,
+                  )
                 : const SizedBox.shrink(),
           ),
-          Container(width: 1, color: Colors.black54), // Subtle seam between dual pages
+          // Right page: flush against center left edge (0 gap between them)
           Expanded(
             child: rightPageIndex != null
-                ? _buildSinglePage(ref, rightPageIndex, settings.marginCrop)
+                ? _buildSinglePage(
+                    ref: ref,
+                    pageIndex: rightPageIndex,
+                    crop: settings.marginCrop,
+                    alignment: Alignment.centerLeft,
+                  )
                 : const SizedBox.shrink(),
           ),
         ],
@@ -65,7 +80,12 @@ class ComicPageViewWidget extends ConsumerWidget {
     }
   }
 
-  Widget _buildSinglePage(WidgetRef ref, int pageIndex, MarginCrop crop) {
+  Widget _buildSinglePage({
+    required WidgetRef ref,
+    required int pageIndex,
+    required MarginCrop crop,
+    required Alignment alignment,
+  }) {
     return FutureBuilder<Uint8List>(
       key: ValueKey('page_$pageIndex'),
       future: ref.read(comicSessionProvider.notifier).loadPageBytes(pageIndex),
@@ -87,6 +107,7 @@ class ComicPageViewWidget extends ConsumerWidget {
         return CroppedImageWidget(
           imageBytes: snapshot.data!,
           marginCrop: crop,
+          alignment: alignment,
         );
       },
     );

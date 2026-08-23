@@ -3,17 +3,17 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/viewer_settings.dart';
 
-/// Renders image bytes with margin cropping applied
+/// Renders image bytes with margin cropping applied and customizable alignment (for 0-gap dual page)
 class CroppedImageWidget extends StatefulWidget {
   final Uint8List imageBytes;
   final MarginCrop marginCrop;
-  final BoxFit fit;
+  final Alignment alignment;
 
   const CroppedImageWidget({
     super.key,
     required this.imageBytes,
     required this.marginCrop,
-    this.fit = BoxFit.contain,
+    this.alignment = Alignment.center,
   });
 
   @override
@@ -84,6 +84,7 @@ class _CroppedImageWidgetState extends State<CroppedImageWidget> {
           painter: _CroppedImagePainter(
             image: _decodedImage!,
             crop: widget.marginCrop,
+            alignment: widget.alignment,
           ),
         );
       },
@@ -94,8 +95,13 @@ class _CroppedImageWidgetState extends State<CroppedImageWidget> {
 class _CroppedImagePainter extends CustomPainter {
   final ui.Image image;
   final MarginCrop crop;
+  final Alignment alignment;
 
-  _CroppedImagePainter({required this.image, required this.crop});
+  _CroppedImagePainter({
+    required this.image,
+    required this.crop,
+    required this.alignment,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -119,16 +125,26 @@ class _CroppedImagePainter extends CustomPainter {
 
     double dstWidth, dstHeight;
     if (dstAspect > srcAspect) {
-      // Height is constraint
       dstHeight = size.height;
       dstWidth = dstHeight * srcAspect;
     } else {
-      // Width is constraint
       dstWidth = size.width;
       dstHeight = dstWidth / srcAspect;
     }
 
-    final dstLeft = (size.width - dstWidth) / 2.0;
+    // Horizontal alignment calculation:
+    // centerRight -> Flush against right edge (for left page of book)
+    // centerLeft  -> Flush against left edge (for right page of book)
+    // center      -> Centered
+    double dstLeft;
+    if (alignment == Alignment.centerRight) {
+      dstLeft = size.width - dstWidth;
+    } else if (alignment == Alignment.centerLeft) {
+      dstLeft = 0.0;
+    } else {
+      dstLeft = (size.width - dstWidth) / 2.0;
+    }
+
     final dstTop = (size.height - dstHeight) / 2.0;
     final dstRect = Rect.fromLTWH(dstLeft, dstTop, dstWidth, dstHeight);
 
@@ -142,9 +158,7 @@ class _CroppedImagePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _CroppedImagePainter oldDelegate) {
     return oldDelegate.image != image ||
-        oldDelegate.crop.top != crop.top ||
-        oldDelegate.crop.bottom != crop.bottom ||
-        oldDelegate.crop.left != crop.left ||
-        oldDelegate.crop.right != crop.right;
+        oldDelegate.crop != crop ||
+        oldDelegate.alignment != alignment;
   }
 }
