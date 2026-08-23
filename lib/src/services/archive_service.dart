@@ -151,7 +151,7 @@ class ArchiveService {
 
     if (isFolder && !kIsWeb) {
       final file = io.File(pageInfo.internalPath!);
-      final bytes = await file.readAsBytes();
+      final bytes = Uint8List.fromList(await file.readAsBytes());
       _pageCache[cacheKey] = bytes;
       return bytes;
     } else {

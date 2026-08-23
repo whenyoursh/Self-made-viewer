@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 // Web stub for dart:io File and Directory and Platform classes
 class FileSystemEntity {
   static Future<bool> isDirectory(String path) async => false;
@@ -6,7 +8,7 @@ class FileSystemEntity {
 class File {
   final String path;
   File(this.path);
-  Future<List<int>> readAsBytes() async => [];
+  Future<Uint8List> readAsBytes() async => Uint8List(0);
 }
 
 class Directory {
