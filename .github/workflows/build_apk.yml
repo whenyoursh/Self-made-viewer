@@ -25,9 +25,14 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Ensure Android Project Config & Gradle Wrapper
+      - name: Generate Fresh Android Scaffolding
         run: |
+          rm -rf android
           flutter create . --platforms=android --org=com.example --project-name=fold_comic_viewer
+
+      - name: Add Android Permissions to AndroidManifest
+        run: |
+          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' android/app/src/main/AndroidManifest.xml
 
       - name: Install dependencies
         run: flutter pub get
