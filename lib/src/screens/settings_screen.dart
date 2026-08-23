@@ -156,8 +156,8 @@ class SettingsScreen extends ConsumerWidget {
                   title: const Text('기본 읽기 순서 (방향)', style: TextStyle(color: Colors.white)),
                   subtitle: Text(
                     settings.readingDirection == ReadingDirection.rightToLeft
-                        ? '일본 만화식 (우 $\\rightarrow$ 좌, 역방향)'
-                        : '한국/서양식 (좌 $\\rightarrow$ 우, 정방향)',
+                        ? '일본 만화식 (우 → 좌, 역방향)'
+                        : '한국/서양식 (좌 → 우, 정방향)',
                     style: const TextStyle(color: Colors.white70),
                   ),
                   trailing: DropdownButton<ReadingDirection>(
