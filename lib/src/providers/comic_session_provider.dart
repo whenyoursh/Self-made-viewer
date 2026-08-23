@@ -175,12 +175,23 @@ class ComicSessionNotifier extends StateNotifier<ComicSessionState> {
       throw RangeError('Page index out of range: $index');
     }
 
+    final book = state.book!;
+    try {
+      final dynamic dynBook = book;
+      if (dynBook.pageByteMap != null) {
+        final map = dynBook.pageByteMap as Map<int, Uint8List>;
+        if (map.containsKey(index)) {
+          return map[index]!;
+        }
+      }
+    } catch (_) {}
+
     final archiveService = _ref.read(archiveServiceProvider);
-    final pageInfo = state.book!.pages[index];
-    final isFolder = state.book!.format == ComicFormat.folder;
+    final pageInfo = book.pages[index];
+    final isFolder = book.format == ComicFormat.folder;
 
     return archiveService.loadPageBytes(
-      comicPath: state.book!.path,
+      comicPath: book.path,
       pageInfo: pageInfo,
       isFolder: isFolder,
     );

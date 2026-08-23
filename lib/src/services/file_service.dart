@@ -38,9 +38,11 @@ class FileService {
   static const Set<String> comicExtensions = {'.zip', '.cbz'};
   static const Set<String> imageExtensions = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'};
 
-  /// Requests storage permissions on Android/devices
+  /// Requests storage permissions on Android/devices (Skipped on Web)
   Future<bool> requestStoragePermission() async {
-    if (!kIsWeb && io.Platform.isAndroid) {
+    if (kIsWeb) return true;
+
+    if (io.Platform.isAndroid) {
       if (await Permission.manageExternalStorage.isGranted) {
         return true;
       }
@@ -58,20 +60,24 @@ class FileService {
 
   /// Picks a comic archive file (.zip, .cbz) supporting both Web & Native
   Future<PickedComicResult?> pickComic() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['zip', 'cbz'],
-      withData: true,
-      dialogTitle: '만화 압축 파일 선택 (ZIP, CBZ)',
-    );
-
-    if (result != null && result.files.isNotEmpty) {
-      final file = result.files.single;
-      return PickedComicResult(
-        name: file.name,
-        path: file.path,
-        bytes: file.bytes,
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: kIsWeb ? FileType.any : FileType.custom,
+        allowedExtensions: kIsWeb ? null : ['zip', 'cbz'],
+        withData: true,
+        dialogTitle: '만화 압축 파일 선택 (ZIP, CBZ)',
       );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.single;
+        return PickedComicResult(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+        );
+      }
+    } catch (e) {
+      debugPrint('File picker error: $e');
     }
     return null;
   }
@@ -79,10 +85,15 @@ class FileService {
   /// Picks a comic folder (Native only)
   Future<String?> pickComicDirectory() async {
     if (kIsWeb) return null;
-    final selectedDirectory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: '만화 이미지 폴더 선택',
-    );
-    return selectedDirectory;
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '만화 이미지 폴더 선택',
+      );
+      return selectedDirectory;
+    } catch (e) {
+      debugPrint('Directory picker error: $e');
+    }
+    return null;
   }
 
   /// Lists comic archives and image folders within a directory

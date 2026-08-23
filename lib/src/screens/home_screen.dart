@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../models/history_record.dart';
 import '../providers/history_provider.dart';
 import '../providers/storage_provider.dart';
+import '../utils/sample_comic_generator.dart';
 import 'folder_browser_screen.dart';
 import 'settings_screen.dart';
 import 'viewer_screen.dart';
@@ -13,16 +15,62 @@ import 'viewer_screen.dart';
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
-  Future<void> _pickAndOpenFile(BuildContext context, WidgetRef ref) async {
-    final fileService = ref.read(fileServiceProvider);
-    final hasPermission = await fileService.requestStoragePermission();
-    if (!hasPermission) {
+  Future<void> _openDemoComic(BuildContext context, WidgetRef ref) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          color: Color(0xFF1E1E2E),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Colors.blueAccent),
+                SizedBox(height: 16),
+                Text('샘플 만화책을 생성하는 중...', style: TextStyle(color: Colors.white, fontSize: 15)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final book = await SampleComicGenerator.generateDemoComic();
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('저장소 접근 권한이 필요합니다.')),
+        Navigator.pop(context); // Close spinner
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ViewerScreen(comicBook: book),
+          ),
         );
       }
-      return;
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('샘플 로드 실패: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickAndOpenFile(BuildContext context, WidgetRef ref) async {
+    final fileService = ref.read(fileServiceProvider);
+
+    if (!kIsWeb) {
+      final hasPermission = await fileService.requestStoragePermission();
+      if (!hasPermission) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('저장소 접근 권한이 필요합니다.')),
+          );
+        }
+        return;
+      }
     }
 
     final result = await fileService.pickComic();
@@ -170,8 +218,58 @@ class HomeScreen extends ConsumerWidget {
         onRefresh: () async => ref.read(historyProvider.notifier).refresh(),
         color: Colors.blueAccent,
         child: ListView(
-          padding: const EdgeInsets.symmetric(vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           children: [
+            // ==================== INSTANT DEMO BANNER ====================
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF203A43), Color(0xFF2C5364)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.blueAccent.withOpacity(0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.bolt, color: Colors.amberAccent, size: 36),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '⚡ 샘플 만화 바로보기 (테스트용)',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '파일 없이 1장/2장, 일본/한국 순서, 여백 제거를 즉시 체험합니다.',
+                          style: TextStyle(fontSize: 12, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueAccent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () => _openDemoComic(context, ref),
+                    child: const Text('체험하기', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
             // ==================== TOP SECTION: RECENT 5 BOOKS ====================
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -219,56 +317,60 @@ class HomeScreen extends ConsumerWidget {
             const SizedBox(height: 24),
 
             // ==================== BOTTOM SECTION: RECENT FOLDERS ====================
-            const Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Icon(Icons.folder_special, size: 20, color: Colors.amberAccent),
-                  SizedBox(width: 8),
-                  Text(
-                    '최근 접근한 내장 폴더',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (recentFolders.isEmpty)
-              _buildEmptyRecentFoldersCard(context, ref)
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
+            if (!kIsWeb) ...[
+              const Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: recentFolders.length,
-                separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
-                itemBuilder: (context, index) {
-                  final folder = recentFolders[index];
-                  return _buildRecentFolderTile(context, ref, folder);
-                },
+                child: Row(
+                  children: [
+                    Icon(Icons.folder_special, size: 20, color: Colors.amberAccent),
+                    SizedBox(width: 8),
+                    Text(
+                      '최근 접근한 내장 폴더',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(height: 12),
+              if (recentFolders.isEmpty)
+                _buildEmptyRecentFoldersCard(context, ref)
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: recentFolders.length,
+                  separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
+                  itemBuilder: (context, index) {
+                    final folder = recentFolders[index];
+                    return _buildRecentFolderTile(context, ref, folder);
+                  },
+                ),
+            ],
 
-            const SizedBox(height: 80), // Padding for FAB
+            const SizedBox(height: 80),
           ],
         ),
       ),
-      // Floating Action Buttons for quick file/folder picking
+      // Floating Action Buttons
       floatingActionButton: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          FloatingActionButton.extended(
-            heroTag: 'pickFolder',
-            backgroundColor: const Color(0xFF2E2E3E),
-            foregroundColor: Colors.amberAccent,
-            onPressed: () => _pickAndOpenFolder(context, ref),
-            icon: const Icon(Icons.create_new_folder),
-            label: const Text('폴더 열기'),
-          ),
-          const SizedBox(width: 12),
+          if (!kIsWeb) ...[
+            FloatingActionButton.extended(
+              heroTag: 'pickFolder',
+              backgroundColor: const Color(0xFF2E2E3E),
+              foregroundColor: Colors.amberAccent,
+              onPressed: () => _pickAndOpenFolder(context, ref),
+              icon: const Icon(Icons.create_new_folder),
+              label: const Text('폴더 열기'),
+            ),
+            const SizedBox(width: 12),
+          ],
           FloatingActionButton.extended(
             heroTag: 'pickFile',
             backgroundColor: Colors.blueAccent,
