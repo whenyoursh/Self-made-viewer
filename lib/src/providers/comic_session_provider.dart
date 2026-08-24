@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/comic_book.dart';
 import '../models/viewer_settings.dart';
@@ -66,6 +67,8 @@ class ComicSessionNotifier extends StateNotifier<ComicSessionState> {
       book: book,
       currentPage: targetPage + 1,
     );
+
+    _triggerPreload(targetPage);
   }
 
   Future<void> openBook(String path, {int? initialPage}) async {
@@ -92,6 +95,8 @@ class ComicSessionNotifier extends StateNotifier<ComicSessionState> {
         book: book,
         currentPage: targetPage + 1,
       );
+
+      _triggerPreload(targetPage);
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -167,7 +172,54 @@ class ComicSessionNotifier extends StateNotifier<ComicSessionState> {
         book: state.book!,
         currentPage: index + 1,
       );
+      _triggerPreload(index);
     }
+  }
+
+  void _triggerPreload(int centerIndex) {
+    if (!state.hasBook) return;
+    final archiveService = _ref.read(archiveServiceProvider);
+    final book = state.book!;
+    archiveService.preloadPages(
+      centerIndex: centerIndex,
+      comicPath: book.path,
+      pages: book.pages,
+      isFolder: book.format == ComicFormat.folder,
+    );
+  }
+
+  ui.Image? getCachedDecodedImage(int index) {
+    final archiveService = _ref.read(archiveServiceProvider);
+    return archiveService.getCachedDecodedImage(index);
+  }
+
+  Future<ui.Image> loadPageImage(int index) async {
+    if (!state.hasBook || index < 0 || index >= state.totalPages) {
+      throw RangeError('Page index out of range: $index');
+    }
+
+    final book = state.book!;
+    try {
+      final dynamic dynBook = book;
+      if (dynBook.pageByteMap != null) {
+        final map = dynBook.pageByteMap as Map<int, Uint8List>;
+        if (map.containsKey(index)) {
+          final codec = await ui.instantiateImageCodec(map[index]!);
+          final frame = await codec.getNextFrame();
+          return frame.image;
+        }
+      }
+    } catch (_) {}
+
+    final archiveService = _ref.read(archiveServiceProvider);
+    final pageInfo = book.pages[index];
+    final isFolder = book.format == ComicFormat.folder;
+
+    return archiveService.loadDecodedImage(
+      comicPath: book.path,
+      pageInfo: pageInfo,
+      isFolder: isFolder,
+    );
   }
 
   Future<Uint8List> loadPageBytes(int index) async {

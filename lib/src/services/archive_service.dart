@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
@@ -19,9 +20,14 @@ class ArchiveService {
     '.gif',
   };
 
-  // In-memory cache for loaded page bytes
+  // In-memory cache for raw page bytes
   final Map<String, Uint8List> _pageCache = {};
   
+  // In-memory LRU cache for pre-decoded ui.Image (Eliminates page turning flicker)
+  final Map<int, ui.Image> _decodedImageCache = {};
+  final List<int> _decodedLruKeys = [];
+  static const int _maxDecodedCacheSize = 25;
+
   // List of sorted archive entries for O(1) direct index access
   List<ArchiveFile> _cachedEntries = [];
   String? _cachedArchivePath;
@@ -51,6 +57,7 @@ class ArchiveService {
     required Uint8List archiveBytes,
   }) async {
     _pageCache.clear();
+    _clearDecodedCache();
     _cachedEntries.clear();
 
     final archive = ZipDecoder().decodeBytes(archiveBytes, verify: false);
@@ -59,7 +66,6 @@ class ArchiveService {
     final validEntries = <ArchiveFile>[];
     for (final f in archive.files) {
       if (!f.isFile) continue;
-      // Normalize slashes
       final normalizedName = f.name.replaceAll('\\', '/');
       if (normalizedName.contains('__MACOSX') ||
           p.basename(normalizedName).startsWith('.') ||
@@ -76,11 +82,9 @@ class ArchiveService {
       throw const FormatException('압축 파일 내에 지원되는 이미지(JPG, PNG, WEBP 등)가 없습니다.\n(하위 폴더 내부 이미지도 지원합니다)');
     }
 
-    // Sort naturally by filename
+    // Sort hierarchically by folder path and filename naturally
     validEntries.sort((a, b) {
-      final aName = a.name.replaceAll('\\', '/');
-      final bName = b.name.replaceAll('\\', '/');
-      return NaturalSort.compare(p.basename(aName), p.basename(bName));
+      return NaturalSort.comparePath(a.name, b.name);
     });
 
     _cachedEntries = validEntries;
@@ -112,7 +116,7 @@ class ArchiveService {
     );
   }
 
-  /// Loads comic metadata (pages list and cover) from a file or folder path (Native only)
+  /// Loads comic metadata from a file or folder path (Native only)
   Future<ComicBook> loadComicBook(String path) async {
     if (kIsWeb) {
       throw UnsupportedError('웹 환경에서는 메모리 바이트 방식으로 로드해야 합니다.');
@@ -128,25 +132,28 @@ class ArchiveService {
     }
   }
 
+  /// Recursively scans directory for comic image files and sorts hierarchically
   Future<ComicBook> _loadFromDirectory(dynamic dir) async {
     final title = p.basename(dir.path);
-    final entities = await dir.list().toList();
+    final imagePaths = <String>[];
 
-    final imageFiles = entities.where((f) {
-      final ext = p.extension(f.path).toLowerCase();
-      return _validExtensions.contains(ext);
-    }).toList();
+    await _collectImagesRecursive(dir, imagePaths);
 
-    if (imageFiles.isEmpty) {
-      throw const FormatException('폴더 내에 지원되는 이미지 파일이 없습니다.');
+    if (imagePaths.isEmpty) {
+      throw const FormatException('폴더 및 하위 폴더 내에 지원되는 이미지 파일이 없습니다.');
     }
 
-    final sortedNames = NaturalSort.sortList(imageFiles.map((f) => p.basename(f.path)).toList().cast<String>());
+    // Sort hierarchically relative to the root directory
+    imagePaths.sort((a, b) {
+      final relA = p.relative(a, from: dir.path);
+      final relB = p.relative(b, from: dir.path);
+      return NaturalSort.comparePath(relA, relB);
+    });
 
     final pages = <ComicPageInfo>[];
-    for (int i = 0; i < sortedNames.length; i++) {
-      final fileName = sortedNames[i];
-      final fullPath = p.join(dir.path, fileName);
+    for (int i = 0; i < imagePaths.length; i++) {
+      final fullPath = imagePaths[i];
+      final fileName = p.basename(fullPath);
       pages.add(ComicPageInfo(
         index: i,
         name: fileName,
@@ -170,7 +177,24 @@ class ArchiveService {
     );
   }
 
-  /// Loads the image bytes for a specific page with O(1) index lookup
+  Future<void> _collectImagesRecursive(dynamic dir, List<String> result) async {
+    final entities = await dir.list().toList();
+    for (final entity in entities) {
+      final isDir = await io.FileSystemEntity.isDirectory(entity.path);
+      if (isDir) {
+        final name = p.basename(entity.path);
+        if (name.startsWith('.') || name.contains('__MACOSX')) continue;
+        await _collectImagesRecursive(entity, result);
+      } else {
+        final ext = p.extension(entity.path).toLowerCase();
+        if (_validExtensions.contains(ext)) {
+          result.add(entity.path);
+        }
+      }
+    }
+  }
+
+  /// Loads the raw image bytes for a specific page with O(1) index lookup
   Future<Uint8List> loadPageBytes({
     required String comicPath,
     required ComicPageInfo pageInfo,
@@ -187,11 +211,10 @@ class ArchiveService {
       _pageCache[cacheKey] = bytes;
       return bytes;
     } else {
-      // Direct O(1) index access from cached entries
       if (pageInfo.index >= 0 && pageInfo.index < _cachedEntries.length) {
         final entry = _cachedEntries[pageInfo.index];
         final bytes = _extractBytes(entry);
-        if (_pageCache.length > 25) {
+        if (_pageCache.length > 35) {
           _pageCache.remove(_pageCache.keys.first);
         }
         _pageCache[cacheKey] = bytes;
@@ -202,8 +225,92 @@ class ArchiveService {
     }
   }
 
+  /// Loads or retrieves a pre-decoded ui.Image for seamless 60fps page display
+  Future<ui.Image> loadDecodedImage({
+    required String comicPath,
+    required ComicPageInfo pageInfo,
+    required bool isFolder,
+  }) async {
+    final index = pageInfo.index;
+    if (_decodedImageCache.containsKey(index)) {
+      _touchDecodedLru(index);
+      return _decodedImageCache[index]!;
+    }
+
+    final bytes = await loadPageBytes(
+      comicPath: comicPath,
+      pageInfo: pageInfo,
+      isFolder: isFolder,
+    );
+
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+
+    _storeDecodedImage(index, image);
+    return image;
+  }
+
+  /// Returns already cached decoded image synchronously if available (0ms delay)
+  ui.Image? getCachedDecodedImage(int index) {
+    if (_decodedImageCache.containsKey(index)) {
+      _touchDecodedLru(index);
+      return _decodedImageCache[index];
+    }
+    return null;
+  }
+
+  /// Preloads upcoming and previous pages in the background to eliminate all page flip delay
+  void preloadPages({
+    required int centerIndex,
+    required String comicPath,
+    required List<ComicPageInfo> pages,
+    required bool isFolder,
+    int window = 4,
+  }) {
+    final start = (centerIndex - 2).clamp(0, pages.length - 1);
+    final end = (centerIndex + window).clamp(0, pages.length - 1);
+
+    for (int i = start; i <= end; i++) {
+      if (!_decodedImageCache.containsKey(i)) {
+        // Asynchronously decode in background
+        loadDecodedImage(
+          comicPath: comicPath,
+          pageInfo: pages[i],
+          isFolder: isFolder,
+        ).catchError((_) {});
+      }
+    }
+  }
+
+  void _touchDecodedLru(int index) {
+    _decodedLruKeys.remove(index);
+    _decodedLruKeys.add(index);
+  }
+
+  void _storeDecodedImage(int index, ui.Image image) {
+    if (_decodedImageCache.length >= _maxDecodedCacheSize) {
+      if (_decodedLruKeys.isNotEmpty) {
+        final oldestIndex = _decodedLruKeys.removeAt(0);
+        final oldImage = _decodedImageCache.remove(oldestIndex);
+        oldImage?.dispose();
+      }
+    }
+    _decodedImageCache[index] = image;
+    _touchDecodedLru(index);
+  }
+
+  void _clearDecodedCache() {
+    for (final img in _decodedImageCache.values) {
+      img.dispose();
+    }
+    _decodedImageCache.clear();
+    _decodedLruKeys.clear();
+  }
+
   void clearCache() {
     _pageCache.clear();
+    _clearDecodedCache();
     _cachedEntries.clear();
     _cachedArchivePath = null;
   }

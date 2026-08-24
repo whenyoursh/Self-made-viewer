@@ -31,5 +31,47 @@ void main() {
 
       expect(sorted, ['img001.png', 'img002.png', 'img003.png', 'img010.png']);
     });
+
+    test('Correctly sorts hierarchical folder and file paths', () {
+      final input = [
+        'Chapter 10/01.jpg',
+        'Chapter 1/02.jpg',
+        'Chapter 2/01.jpg',
+        'Chapter 1/01.jpg',
+        'Chapter 2/10.jpg',
+        'Chapter 1/10.jpg',
+        'Chapter 2/02.jpg',
+      ];
+
+      final sorted = NaturalSort.sortPaths(input);
+
+      expect(sorted, [
+        'Chapter 1/01.jpg',
+        'Chapter 1/02.jpg',
+        'Chapter 1/10.jpg',
+        'Chapter 2/01.jpg',
+        'Chapter 2/02.jpg',
+        'Chapter 2/10.jpg',
+        'Chapter 10/01.jpg',
+      ]);
+    });
+
+    test('Handles Windows backslashes and mixed slashes in hierarchical paths', () {
+      final input = [
+        r'Vol 2\01.jpg',
+        r'Vol 1/02.jpg',
+        r'Vol 10\01.jpg',
+        r'Vol 1\01.jpg',
+      ];
+
+      final sorted = NaturalSort.sortPaths(input);
+
+      expect(sorted, [
+        r'Vol 1\01.jpg',
+        r'Vol 1/02.jpg',
+        r'Vol 2\01.jpg',
+        r'Vol 10\01.jpg',
+      ]);
+    });
   });
 }

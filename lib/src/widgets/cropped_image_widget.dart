@@ -3,15 +3,19 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/viewer_settings.dart';
 
-/// Renders image bytes with margin cropping applied and customizable alignment (for 0-gap dual page)
+/// Renders decoded image with margin cropping applied and zero flicker
 class CroppedImageWidget extends StatefulWidget {
-  final Uint8List imageBytes;
+  final ui.Image? initialImage;
+  final Future<ui.Image>? imageFuture;
+  final Uint8List? fallbackBytes;
   final MarginCrop marginCrop;
   final Alignment alignment;
 
   const CroppedImageWidget({
     super.key,
-    required this.imageBytes,
+    this.initialImage,
+    this.imageFuture,
+    this.fallbackBytes,
     required this.marginCrop,
     this.alignment = Alignment.center,
   });
@@ -21,58 +25,66 @@ class CroppedImageWidget extends StatefulWidget {
 }
 
 class _CroppedImageWidgetState extends State<CroppedImageWidget> {
-  ui.Image? _decodedImage;
-  bool _isLoading = true;
+  ui.Image? _currentImage;
 
   @override
   void initState() {
     super.initState();
-    _decodeImage();
+    _currentImage = widget.initialImage;
+    _resolveImage();
   }
 
   @override
   void didUpdateWidget(covariant CroppedImageWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.imageBytes != widget.imageBytes) {
-      _decodeImage();
+    if (widget.initialImage != null && widget.initialImage != _currentImage) {
+      _currentImage = widget.initialImage;
+    } else if (widget.imageFuture != oldWidget.imageFuture ||
+        widget.fallbackBytes != oldWidget.fallbackBytes) {
+      _resolveImage();
     }
   }
 
-  Future<void> _decodeImage() async {
-    setState(() => _isLoading = true);
-    try {
-      final codec = await ui.instantiateImageCodec(widget.imageBytes);
-      final frame = await codec.getNextFrame();
-      if (mounted) {
-        setState(() {
-          _decodedImage = frame.image;
-          _isLoading = false;
-        });
+  Future<void> _resolveImage() async {
+    if (widget.initialImage != null) {
+      if (mounted) setState(() => _currentImage = widget.initialImage);
+      return;
+    }
+
+    if (widget.imageFuture != null) {
+      try {
+        final img = await widget.imageFuture!;
+        if (mounted) {
+          setState(() => _currentImage = img);
+        }
+      } catch (e) {
+        debugPrint('Failed to resolve image future: $e');
       }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      return;
+    }
+
+    if (widget.fallbackBytes != null) {
+      try {
+        final codec = await ui.instantiateImageCodec(widget.fallbackBytes!);
+        final frame = await codec.getNextFrame();
+        if (mounted) {
+          setState(() => _currentImage = frame.image);
+        }
+      } catch (_) {}
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    if (_currentImage == null) {
       return const Center(
-        child: CircularProgressIndicator(color: Colors.blueAccent),
-      );
-    }
-
-    if (_decodedImage == null) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.broken_image, color: Colors.white38, size: 48),
-            SizedBox(height: 8),
-            Text('이미지를 불러올 수 없습니다.', style: TextStyle(color: Colors.white38)),
-          ],
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: Colors.blueAccent,
+          ),
         ),
       );
     }
@@ -82,7 +94,7 @@ class _CroppedImageWidgetState extends State<CroppedImageWidget> {
         return CustomPaint(
           size: Size(constraints.maxWidth, constraints.maxHeight),
           painter: _CroppedImagePainter(
-            image: _decodedImage!,
+            image: _currentImage!,
             crop: widget.marginCrop,
             alignment: widget.alignment,
           ),

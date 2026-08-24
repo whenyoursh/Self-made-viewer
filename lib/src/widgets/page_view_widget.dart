@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/viewer_settings.dart';
@@ -6,7 +5,7 @@ import '../providers/comic_session_provider.dart';
 import '../providers/settings_provider.dart';
 import 'cropped_image_widget.dart';
 
-/// Handles rendering single page or dual pages (accounting for LTR/RTL reading direction with 0 gap)
+/// Handles rendering single page or dual pages (accounting for LTR/RTL reading direction with 0 gap & zero flicker)
 class ComicPageViewWidget extends ConsumerWidget {
   const ComicPageViewWidget({super.key});
 
@@ -86,30 +85,16 @@ class ComicPageViewWidget extends ConsumerWidget {
     required MarginCrop crop,
     required Alignment alignment,
   }) {
-    return FutureBuilder<Uint8List>(
-      key: ValueKey('page_$pageIndex'),
-      future: ref.read(comicSessionProvider.notifier).loadPageBytes(pageIndex),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: Colors.blueAccent),
-          );
-        }
-        if (snapshot.hasError || !snapshot.hasData) {
-          return Center(
-            child: Text(
-              '${pageIndex + 1} 페이지 로드 실패',
-              style: const TextStyle(color: Colors.white54),
-            ),
-          );
-        }
+    final notifier = ref.read(comicSessionProvider.notifier);
+    final cachedImage = notifier.getCachedDecodedImage(pageIndex);
+    final imageFuture = cachedImage == null ? notifier.loadPageImage(pageIndex) : null;
 
-        return CroppedImageWidget(
-          imageBytes: snapshot.data!,
-          marginCrop: crop,
-          alignment: alignment,
-        );
-      },
+    return CroppedImageWidget(
+      key: ValueKey('page_$pageIndex'),
+      initialImage: cachedImage,
+      imageFuture: imageFuture,
+      marginCrop: crop,
+      alignment: alignment,
     );
   }
 }
