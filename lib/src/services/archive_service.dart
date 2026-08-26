@@ -55,13 +55,14 @@ class ArchiveService {
   Future<ComicBook> loadComicFromBytes({
     required String title,
     required Uint8List archiveBytes,
+    String? actualPath,
   }) async {
     _pageCache.clear();
     _clearDecodedCache();
     _cachedEntries.clear();
 
     final archive = ZipDecoder().decodeBytes(archiveBytes, verify: false);
-    _cachedArchivePath = title;
+    _cachedArchivePath = actualPath ?? title;
 
     final validEntries = <ArchiveFile>[];
     for (final f in archive.files) {
@@ -104,11 +105,11 @@ class ArchiveService {
     Uint8List? coverBytes;
     if (validEntries.isNotEmpty) {
       coverBytes = _extractBytes(validEntries.first);
-      _pageCache['$title:0'] = coverBytes;
+      _pageCache['${actualPath ?? title}:0'] = coverBytes;
     }
 
     return ComicBook(
-      path: title,
+      path: actualPath ?? title,
       title: title,
       format: ComicFormat.zip,
       pages: pages,
@@ -128,7 +129,11 @@ class ArchiveService {
     } else {
       final file = io.File(path);
       final bytes = Uint8List.fromList(await file.readAsBytes());
-      return loadComicFromBytes(title: p.basenameWithoutExtension(path), archiveBytes: bytes);
+      return loadComicFromBytes(
+        title: p.basenameWithoutExtension(path),
+        archiveBytes: bytes,
+        actualPath: path,
+      );
     }
   }
 

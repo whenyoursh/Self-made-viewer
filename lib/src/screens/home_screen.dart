@@ -101,11 +101,22 @@ class HomeScreen extends ConsumerWidget {
       );
 
       try {
-        if (result.bytes != null) {
+        if (result.path != null) {
+          if (context.mounted) {
+            Navigator.pop(context); // Close loading spinner
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ViewerScreen(comicPath: result.path!),
+              ),
+            );
+          }
+        } else if (result.bytes != null) {
           final archiveService = ref.read(archiveServiceProvider);
           final book = await archiveService.loadComicFromBytes(
             title: result.name,
             archiveBytes: result.bytes!,
+            actualPath: result.path,
           );
           if (context.mounted) {
             Navigator.pop(context); // Close loading spinner
@@ -113,16 +124,6 @@ class HomeScreen extends ConsumerWidget {
               context,
               MaterialPageRoute(
                 builder: (_) => ViewerScreen(comicBook: book),
-              ),
-            );
-          }
-        } else if (result.path != null) {
-          if (context.mounted) {
-            Navigator.pop(context); // Close loading spinner
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ViewerScreen(comicPath: result.path!),
               ),
             );
           }
